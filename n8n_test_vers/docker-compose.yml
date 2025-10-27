@@ -1,0 +1,70 @@
+version: '3.8'
+
+services:
+  redis:
+    image: redis:alpine
+    container_name: executor-balancer-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: executor-balancer-n8n
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=admin
+      - N8N_BASIC_AUTH_PASSWORD=admin123
+      - N8N_HOST=localhost
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - WEBHOOK_URL=http://localhost:5678/
+      - GENERIC_TIMEZONE=Europe/Moscow
+      - N8N_REDIS_HOST=redis
+      - N8N_REDIS_PORT=6379
+      - N8N_REDIS_DB=1
+    volumes:
+      - n8n_data:/home/node/.n8n
+      # Windows-совместимые пути
+      - ./executor_balancer_redis_improved.json:/home/node/.n8n/workflows/executor_balancer_redis_improved.json
+      - ./stats_workflow_redis_improved.json:/home/node/.n8n/workflows/stats_workflow_redis_improved.json
+      - ./executor_management_workflow.json:/home/node/.n8n/workflows/executor_management_workflow.json
+      - ./monitoring_workflow.json:/home/node/.n8n/workflows/monitoring_workflow.json
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    # Дополнительные настройки для Windows
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # Опциональный сервис для мониторинга Redis
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: executor-balancer-redis-commander
+    ports:
+      - "8081:8081"
+    environment:
+      - REDIS_HOSTS=local:redis:6379
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+volumes:
+  redis_data:
+    driver: local
+  n8n_data:
+    driver: local
+
+networks:
+  default:
+    name: executor-balancer-network
