@@ -13,7 +13,7 @@ import threading
 
 # Конфигурация страницы
 st.set_page_config(
-    page_title="АИС - Система распределения заявок",
+    page_title="СРЗ - Система распределения заявок",
     page_icon="⚖️",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -338,7 +338,7 @@ def init_session_state():
 
 # Заголовок приложения
 def render_header():
-    st.markdown('<h1 class="main-header">⚖️ АИС - Система распределения заявок</h1>', unsafe_allow_html=True)
+    st.markdown('<h1 class="main-header">⚖️ СРЗ - Система распределения заявок</h1>', unsafe_allow_html=True)
     st.markdown("""
     <div style="text-align: center; color: #7f8c8d; margin-bottom: 2rem;">
         Демонстрация интеллектуального распределения заявок между исполнителями<br>
