@@ -6,32 +6,13 @@ services:
     ports:
       - "8501:8501"
     environment:
-      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/executor_balancer
       - REDIS_URL=redis://redis:6379/0
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
     volumes:
       - .:/app
     command: streamlit run streamlit_app/ais_app.py --server.port 8501 --server.address 0.0.0.0
-
-  postgres:
-    image: postgres:15
-    environment:
-      POSTGRES_DB: executor_balancer
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
 
   redis:
     image: redis:7-alpine
@@ -46,5 +27,4 @@ services:
       retries: 5
 
 volumes:
-  postgres_data:
   redis_data:

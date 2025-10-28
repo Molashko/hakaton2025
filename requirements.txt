@@ -20,4 +20,5 @@ python-multipart==0.0.6
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
 plotly==5.17.0
+streamlit-autorefresh==1.0.1
 requests==2.31.0
