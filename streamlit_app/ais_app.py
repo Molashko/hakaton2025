@@ -376,6 +376,30 @@ def render_dashboard():
         except Exception:
             st.markdown('<meta http-equiv="refresh" content="2">', unsafe_allow_html=True)
     
+    # Кнопка автоматического распределения
+    tasks = st.session_state.tasks
+    assignments = st.session_state.assignments
+    assigned_task_ids = set(a['task_id'] for a in assignments)
+    unassigned_count = len([t for t in tasks if t['id'] not in assigned_task_ids])
+    
+    if unassigned_count > 0:
+        col_button1, col_button2 = st.columns([3, 1])
+        with col_button1:
+            st.info(f"⚠️ Нераспределенных заявок: **{unassigned_count}**")
+        with col_button2:
+            if st.button("🤖 Автораспределение", type="primary", use_container_width=True):
+                with st.spinner("Распределяю заявки..."):
+                    assigned_count = auto_assign_unassigned_tasks()
+                    st.session_state.tasks = load_tasks_from_db()
+                    st.session_state.executors = load_executors_from_db()
+                    st.session_state.assignments = load_assignments_from_db()
+                    if assigned_count > 0:
+                        st.success(f"✅ Автоматически распределено заявок: {assigned_count}")
+                    else:
+                        st.warning("⚠️ Не удалось распределить заявки. Проверьте наличие активных исполнителей.")
+                    st.rerun()
+        st.markdown("---")
+    
     # Ключевые метрики
     col1, col2, col3, col4 = st.columns(4)
     
@@ -404,8 +428,6 @@ def render_dashboard():
             utilizations = [e['assigned_today'] / e['daily_limit'] if e['daily_limit'] > 0 else 0 for e in active_executors]
             avg_util = sum(utilizations) / len(utilizations)
             mae = sum(abs(u - avg_util) for u in utilizations) / len(utilizations)
-        
-        if mae > 0:
             st.metric(
                 label="⚖️ Справедливость (MAE)",
                 value=f"{mae:.3f}",
@@ -416,11 +438,8 @@ def render_dashboard():
             st.metric(label="⚖️ Справедливость (MAE)", value="N/A")
     
     with col4:
-        avg_load = 0
         if active_executors:
             avg_load = sum(e['assigned_today'] for e in active_executors) / len(active_executors)
-        
-        if avg_load > 0:
             st.metric(
                 label="📈 Средняя нагрузка",
                 value=f"{avg_load:.1f}",
@@ -626,7 +645,18 @@ def render_executors_management():
                     save_executor_to_db(executor_to_edit)
                     st.session_state[f"editing_executor_{editing_executor_id}"] = False
                     st.session_state.executors = load_executors_from_db()
-                    st.success("✅ Исполнитель успешно обновлен!")
+                    
+                    # Автоматически распределяем нераспределенные заявки
+                    assigned_count = auto_assign_unassigned_tasks()
+                    
+                    # Обновляем данные в сессии
+                    st.session_state.assignments = load_assignments_from_db()
+                    st.session_state.executors = load_executors_from_db()
+                    
+                    if assigned_count > 0:
+                        st.success(f"✅ Исполнитель обновлен! Автоматически назначено заявок: {assigned_count}")
+                    else:
+                        st.success("✅ Исполнитель успешно обновлен!")
                     st.rerun()
                 else:
                     st.error("❌ Заполните обязательные поля")
@@ -679,7 +709,18 @@ def render_executors_management():
             }
             save_executor_to_db(new_executor)
             st.session_state.executors = load_executors_from_db()
-            st.success("✅ Исполнитель успешно добавлен!")
+            
+            # Автоматически распределяем нераспределенные заявки
+            assigned_count = auto_assign_unassigned_tasks()
+            
+            # Обновляем данные в сессии
+            st.session_state.assignments = load_assignments_from_db()
+            st.session_state.executors = load_executors_from_db()
+            
+            if assigned_count > 0:
+                st.success(f"✅ Исполнитель успешно добавлен! Автоматически назначено заявок: {assigned_count}")
+            else:
+                st.success("✅ Исполнитель успешно добавлен!")
             st.rerun()
         else:
             st.error("❌ Заполните обязательные поля")
@@ -743,6 +784,51 @@ def find_best_executor_simple(task, executors):
             best_executor = executor
     
     return best_executor, best_score if best_executor else None
+
+def auto_assign_unassigned_tasks():
+    """Автоматически распределяет все нераспределенные заявки"""
+    tasks = load_tasks_from_db()
+    assignments = load_assignments_from_db()
+    executors = load_executors_from_db()
+    
+    if not executors or not tasks:
+        return 0
+    
+    # Найти ID всех распределенных заявок
+    assigned_task_ids = set(a['task_id'] for a in assignments)
+    
+    # Найти нераспределенные заявки
+    unassigned_tasks = [t for t in tasks if t['id'] not in assigned_task_ids]
+    
+    if not unassigned_tasks:
+        return 0
+    
+    assigned_count = 0
+    
+    # Распределить каждую нераспределенную заявку
+    for task in unassigned_tasks:
+        result = find_best_executor_simple(task, executors)
+        if result:
+            executor, score = result
+            assignment = {
+                'id': str(uuid.uuid4()),
+                'task_id': task['id'],
+                'executor_id': executor['id'],
+                'assigned_at': datetime.now().isoformat(),
+                'score': score
+            }
+            save_assignment_to_db(assignment)
+            
+            # Обновляем счетчик исполнителя
+            executor['assigned_today'] += 1
+            save_executor_to_db(executor)
+            
+            assigned_count += 1
+            
+            # Перезагружаем исполнителей для актуальных данных
+            executors = load_executors_from_db()
+    
+    return assigned_count
 
 def run_load_test_background(num_tasks, batch_size, delay_ms):
     """Фоновая функция для нагрузочного тестирования"""
@@ -844,7 +930,7 @@ def render_load_test():
             st.session_state.load_test_status = 'stopped'
             st.warning("Тестирование остановлено")
             st.rerun()
-    
+            
     elif test_status == 'completed':
         elapsed = st.session_state.get('load_test_elapsed', 0)
         performance = st.session_state.get('load_test_performance', 0)
@@ -882,22 +968,22 @@ def render_load_test():
         
         col1, col2 = st.columns(2)
         
-        with col1:
+    with col1:
             num_tasks = st.number_input("Количество заявок для генерации", min_value=10, max_value=10000, value=100, step=10)
             batch_size = st.number_input("Размер батча (заявок за раз)", min_value=1, max_value=100, value=10)
         
-        with col2:
+    with col2:
             delay_ms = st.slider("Задержка между батчами (мс)", min_value=0, max_value=1000, value=100, step=50)
-        
-        st.markdown("---")
-        
-        if st.button("🚀 Запустить нагрузочное тестирование", type="primary"):
+    
+    st.markdown("---")
+
+    if st.button("🚀 Запустить нагрузочное тестирование", type="primary"):
             # Проверяем есть ли исполнители
             executors = load_executors_from_db()
             if not executors:
                 st.error("❌ Нет исполнителей! Сначала добавьте исполнителей в разделе 'Исполнители'")
-                return
-            
+            return
+    
             # Запускаем тестирование в отдельном потоке
             test_thread = threading.Thread(
                 target=run_load_test_background,
