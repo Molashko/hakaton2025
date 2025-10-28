@@ -1,0 +1,142 @@
+[
+  {
+    "id": "d8052763-b4ee-4cac-ac77-14d49735c50a",
+    "name": "Анна Петрова",
+    "email": "anna.petrova@company.com",
+    "phone": "+7 (999) 123-45-67",
+    "department": "IT",
+    "skills": [
+      "Python",
+      "FastAPI",
+      "SQL",
+      "Docker"
+    ],
+    "experience": "3-5 лет",
+    "rating": 4,
+    "capacity": 8,
+    "active": true,
+    "created_at": "2025-10-28T03:28:41.600966",
+    "parameters": {
+      "specialization": "Backend разработка",
+      "certifications": [
+        "AWS",
+        "Python Professional"
+      ],
+      "languages": [
+        "Русский",
+        "Английский"
+      ]
+    }
+  },
+  {
+    "id": "b658dfb4-10e8-4a4c-9f29-ca2bfaeb0b5d",
+    "name": "Михаил Смирнов",
+    "email": "mikhail.smirnov@company.com",
+    "phone": "+7 (999) 234-56-78",
+    "department": "Строительство",
+    "skills": [
+      "Проектирование",
+      "Смета",
+      "Контроль качества"
+    ],
+    "experience": "5-10 лет",
+    "rating": 5,
+    "capacity": 6,
+    "active": true,
+    "created_at": "2025-10-28T03:28:41.600966",
+    "parameters": {
+      "specialization": "Жилые здания",
+      "certifications": [
+        "ГИП",
+        "СРО"
+      ],
+      "languages": [
+        "Русский"
+      ]
+    }
+  },
+  {
+    "id": "8318741c-7983-4b46-9048-c5c74bba398f",
+    "name": "Елена Козлова",
+    "email": "elena.kozlova@company.com",
+    "phone": "+7 (999) 345-67-89",
+    "department": "Страхование",
+    "skills": [
+      "Анализ рисков",
+      "Оценка ущерба",
+      "Продажи"
+    ],
+    "experience": "1-3 года",
+    "rating": 3,
+    "capacity": 10,
+    "active": true,
+    "created_at": "2025-10-28T03:28:41.600966",
+    "parameters": {
+      "specialization": "Автострахование",
+      "certifications": [
+        "Страховой агент"
+      ],
+      "languages": [
+        "Русский",
+        "Английский"
+      ]
+    }
+  },
+  {
+    "id": "2a53f9de-8332-46c5-8fd6-645575abd0b5",
+    "name": "Дмитрий Волков",
+    "email": "dmitry.volkov@company.com",
+    "phone": "+7 (999) 456-78-90",
+    "department": "IT",
+    "skills": [
+      "JavaScript",
+      "React",
+      "Node.js",
+      "MongoDB"
+    ],
+    "experience": "1-3 года",
+    "rating": 3,
+    "capacity": 12,
+    "active": true,
+    "created_at": "2025-10-28T03:28:41.600966",
+    "parameters": {
+      "specialization": "Frontend разработка",
+      "certifications": [
+        "React Developer"
+      ],
+      "languages": [
+        "Русский",
+        "Английский"
+      ]
+    }
+  },
+  {
+    "id": "db77ce41-46bb-48a9-ba9e-dfefa05ff275",
+    "name": "Ольга Морозова",
+    "email": "olga.morozova@company.com",
+    "phone": "+7 (999) 567-89-01",
+    "department": "Консалтинг",
+    "skills": [
+      "Бизнес-анализ",
+      "Процессы",
+      "Управление проектами"
+    ],
+    "experience": "Более 10 лет",
+    "rating": 5,
+    "capacity": 4,
+    "active": true,
+    "created_at": "2025-10-28T03:28:41.600966",
+    "parameters": {
+      "specialization": "Бизнес-консалтинг",
+      "certifications": [
+        "PMP",
+        "MBA"
+      ],
+      "languages": [
+        "Русский",
+        "Английский",
+        "Немецкий"
+      ]
+    }
+  }
+]
