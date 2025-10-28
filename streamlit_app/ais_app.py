@@ -102,6 +102,61 @@ def init_sqlite():
         score REAL
     )
     """)
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS load_test_status (
+        id INTEGER PRIMARY KEY,
+        status TEXT,
+        progress REAL,
+        current INTEGER,
+        total INTEGER,
+        assigned INTEGER,
+        elapsed REAL,
+        performance REAL,
+        message TEXT,
+        updated_at TEXT
+    )
+    """)
+    conn.commit()
+    conn.close()
+
+def get_load_test_status():
+    """Получить статус нагрузочного теста из БД"""
+    conn = get_sqlite_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM load_test_status WHERE id = 1")
+    row = cur.fetchone()
+    conn.close()
+    if row:
+        return {
+            'status': row['status'],
+            'progress': row['progress'] or 0,
+            'current': row['current'] or 0,
+            'total': row['total'] or 0,
+            'assigned': row['assigned'] or 0,
+            'elapsed': row['elapsed'] or 0,
+            'performance': row['performance'] or 0,
+            'message': row['message'] or ''
+        }
+    return None
+
+def set_load_test_status(status, progress=0, current=0, total=0, assigned=0, elapsed=0, performance=0, message=''):
+    """Установить статус нагрузочного теста в БД"""
+    conn = get_sqlite_conn()
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO load_test_status (id, status, progress, current, total, assigned, elapsed, performance, message, updated_at)
+        VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            status=excluded.status,
+            progress=excluded.progress,
+            current=excluded.current,
+            total=excluded.total,
+            assigned=excluded.assigned,
+            elapsed=excluded.elapsed,
+            performance=excluded.performance,
+            message=excluded.message,
+            updated_at=excluded.updated_at
+    """, (status, progress, current, total, assigned, elapsed, performance, message, datetime.now().isoformat()))
     conn.commit()
     conn.close()
 
@@ -344,12 +399,12 @@ def render_dashboard():
     st.markdown('<h2 class="section-header">⚖️ Распределение заявок</h2>', unsafe_allow_html=True)
 
     # Показываем индикатор нагрузочного тестирования если оно запущено
-    test_status = st.session_state.get('load_test_status')
-    if test_status == 'running':
-        progress = st.session_state.get('load_test_progress', 0)
-        current = st.session_state.get('load_test_current', 0)
-        total = st.session_state.get('load_test_total', 0)
-        assigned = st.session_state.get('load_test_assigned', 0)
+    test_status_data = get_load_test_status()
+    if test_status_data and test_status_data['status'] == 'running':
+        progress = test_status_data['progress']
+        current = test_status_data['current']
+        total = test_status_data['total']
+        assigned = test_status_data['assigned']
         
         with st.expander("🔄 Нагрузочное тестирование в процессе...", expanded=True):
             st.progress(progress)
@@ -357,7 +412,7 @@ def render_dashboard():
             col1, col2 = st.columns(2)
             with col1:
                 if st.button("⏹️ Остановить"):
-                    st.session_state.load_test_status = 'stopped'
+                    set_load_test_status('stopped')
                     st.rerun()
             with col2:
                 if st.button("🧪 Перейти к тестированию"):
@@ -370,34 +425,32 @@ def render_dashboard():
         st.session_state.tasks = load_tasks_from_db()
         st.session_state.executors = load_executors_from_db()
         st.session_state.assignments = load_assignments_from_db()
+        
+        # Автоматическое распределение нераспределенных заявок
+        assigned_count = auto_assign_unassigned_tasks()
+        if assigned_count > 0:
+            # Обновляем данные после распределения
+            st.session_state.tasks = load_tasks_from_db()
+            st.session_state.executors = load_executors_from_db()
+            st.session_state.assignments = load_assignments_from_db()
+        
         try:
             from streamlit_autorefresh import st_autorefresh
             st_autorefresh(interval=2000, limit=None, key="ais_realtime")
         except Exception:
             st.markdown('<meta http-equiv="refresh" content="2">', unsafe_allow_html=True)
     
-    # Кнопка автоматического распределения
+    # Индикатор автоматического распределения
     tasks = st.session_state.tasks
     assignments = st.session_state.assignments
     assigned_task_ids = set(a['task_id'] for a in assignments)
     unassigned_count = len([t for t in tasks if t['id'] not in assigned_task_ids])
     
     if unassigned_count > 0:
-        col_button1, col_button2 = st.columns([3, 1])
-        with col_button1:
-            st.info(f"⚠️ Нераспределенных заявок: **{unassigned_count}**")
-        with col_button2:
-            if st.button("🤖 Автораспределение", type="primary", use_container_width=True):
-                with st.spinner("Распределяю заявки..."):
-                    assigned_count = auto_assign_unassigned_tasks()
-                    st.session_state.tasks = load_tasks_from_db()
-                    st.session_state.executors = load_executors_from_db()
-                    st.session_state.assignments = load_assignments_from_db()
-                    if assigned_count > 0:
-                        st.success(f"✅ Автоматически распределено заявок: {assigned_count}")
-                    else:
-                        st.warning("⚠️ Не удалось распределить заявки. Проверьте наличие активных исполнителей.")
-                    st.rerun()
+        st.info(f"⚠️ Нераспределенных заявок: **{unassigned_count}** (автоматически распределяются)")
+        st.markdown("---")
+    elif len(assignments) > 0:
+        st.success(f"✅ Все заявки распределены! Всего назначений: {len(assignments)}")
         st.markdown("---")
     
     # Ключевые метрики
@@ -657,7 +710,7 @@ def render_executors_management():
                         st.success(f"✅ Исполнитель обновлен! Автоматически назначено заявок: {assigned_count}")
                     else:
                         st.success("✅ Исполнитель успешно обновлен!")
-                    st.rerun()
+                        st.rerun()
                 else:
                     st.error("❌ Заполните обязательные поля")
         
@@ -721,7 +774,7 @@ def render_executors_management():
                 st.success(f"✅ Исполнитель успешно добавлен! Автоматически назначено заявок: {assigned_count}")
             else:
                 st.success("✅ Исполнитель успешно добавлен!")
-            st.rerun()
+                st.rerun()
         else:
             st.error("❌ Заполните обязательные поля")
     
@@ -836,26 +889,23 @@ def run_load_test_background(num_tasks, batch_size, delay_ms):
         categories = ["IT", "Строительство", "Страхование", "Консалтинг"]
         priorities = ["Низкий", "Средний", "Высокий", "Критический"]
         
-        st.session_state.load_test_status = 'running'
-        st.session_state.load_test_progress = 0
-        st.session_state.load_test_current = 0
-        st.session_state.load_test_total = num_tasks
-        st.session_state.load_test_assigned = 0
+        set_load_test_status('running', 0, 0, num_tasks, 0)
         
         total_generated = 0
         total_assigned = 0
         start_time = time.time()
         
         for i in range(0, num_tasks, batch_size):
-            if st.session_state.get('load_test_status') == 'stopped':
+            # Проверяем статус (может быть остановлен пользователем)
+            status = get_load_test_status()
+            if status and status['status'] == 'stopped':
                 break
             
             current_batch_size = min(batch_size, num_tasks - i)
             executors = load_executors_from_db()
             
             if not executors:
-                st.session_state.load_test_status = 'error'
-                st.session_state.load_test_message = "Нет исполнителей!"
+                set_load_test_status('error', message="Нет исполнителей!")
                 return
             
             for j in range(current_batch_size):
@@ -889,53 +939,56 @@ def run_load_test_background(num_tasks, batch_size, delay_ms):
             
             total_generated += current_batch_size
             
-            # Обновляем прогресс в session_state
-            st.session_state.load_test_progress = total_generated / num_tasks
-            st.session_state.load_test_current = total_generated
-            st.session_state.load_test_assigned = total_assigned
+            # Обновляем прогресс в БД
+            progress = total_generated / num_tasks
+            set_load_test_status('running', progress, total_generated, num_tasks, total_assigned)
             
             if delay_ms > 0 and i + batch_size < num_tasks:
                 time.sleep(delay_ms / 1000.0)
         
         end_time = time.time()
         elapsed_time = end_time - start_time
+        performance = total_generated / elapsed_time if elapsed_time > 0 else 0
         
         # Завершение
-        st.session_state.load_test_status = 'completed'
-        st.session_state.load_test_elapsed = elapsed_time
-        st.session_state.load_test_performance = total_generated / elapsed_time if elapsed_time > 0 else 0
+        set_load_test_status('completed', 1.0, total_generated, num_tasks, total_assigned, elapsed_time, performance)
         
     except Exception as e:
-        st.session_state.load_test_status = 'error'
-        st.session_state.load_test_message = f"Ошибка: {str(e)}"
+        set_load_test_status('error', message=f"Ошибка: {str(e)}")
 
 def render_load_test():
     st.markdown('<h2 class="section-header">🧪 Нагрузочное тестирование</h2>', unsafe_allow_html=True)
     
-    # Показываем статус если тестирование запущено
-    test_status = st.session_state.get('load_test_status')
+    # Получаем текущий статус теста из БД
+    test_status_data = get_load_test_status()
+    test_status = test_status_data['status'] if test_status_data else None
     
     if test_status == 'running':
         st.info("🔄 Тестирование выполняется в фоновом режиме. Вы можете переключаться между вкладками!")
         
-        progress = st.session_state.get('load_test_progress', 0)
-        current = st.session_state.get('load_test_current', 0)
-        total = st.session_state.get('load_test_total', 0)
-        assigned = st.session_state.get('load_test_assigned', 0)
+        progress = test_status_data['progress']
+        current = test_status_data['current']
+        total = test_status_data['total']
+        assigned = test_status_data['assigned']
         
         st.progress(progress)
         st.write(f"**Обработано:** {current}/{total} заявок | **Назначено:** {assigned}")
         
-        if st.button("⏹️ Остановить тестирование", type="secondary"):
-            st.session_state.load_test_status = 'stopped'
-            st.warning("Тестирование остановлено")
-            st.rerun()
-            
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("⏹️ Остановить тестирование", type="secondary"):
+                set_load_test_status('stopped')
+                st.warning("Тестирование остановлено")
+                st.rerun()
+        with col2:
+            if st.button("🔄 Обновить", type="secondary"):
+                st.rerun()
+    
     elif test_status == 'completed':
-        elapsed = st.session_state.get('load_test_elapsed', 0)
-        performance = st.session_state.get('load_test_performance', 0)
-        current = st.session_state.get('load_test_current', 0)
-        assigned = st.session_state.get('load_test_assigned', 0)
+        elapsed = test_status_data['elapsed']
+        performance = test_status_data['performance']
+        current = test_status_data['current']
+        assigned = test_status_data['assigned']
         
         st.success(f"""
         ✅ **Тестирование завершено!**  
@@ -944,19 +997,19 @@ def render_load_test():
         """)
         
         if st.button("🔄 Запустить новое тестирование"):
-            st.session_state.load_test_status = None
+            set_load_test_status('idle')
             st.rerun()
-            
+        
         st.balloons()
     
     elif test_status == 'error':
-        error_msg = st.session_state.get('load_test_message', 'Неизвестная ошибка')
+        error_msg = test_status_data['message']
         st.error(f"❌ Ошибка: {error_msg}")
         
         if st.button("🔄 Попробовать снова"):
-            st.session_state.load_test_status = None
+            set_load_test_status('idle')
             st.rerun()
-            
+    
     # Форма настроек (показываем только если тест не запущен)
     if test_status not in ['running']:
         st.markdown("""
@@ -968,22 +1021,22 @@ def render_load_test():
         
         col1, col2 = st.columns(2)
         
-    with col1:
+        with col1:
             num_tasks = st.number_input("Количество заявок для генерации", min_value=10, max_value=10000, value=100, step=10)
             batch_size = st.number_input("Размер батча (заявок за раз)", min_value=1, max_value=100, value=10)
         
-    with col2:
+        with col2:
             delay_ms = st.slider("Задержка между батчами (мс)", min_value=0, max_value=1000, value=100, step=50)
-    
-    st.markdown("---")
-
-    if st.button("🚀 Запустить нагрузочное тестирование", type="primary"):
+        
+        st.markdown("---")
+        
+        if st.button("🚀 Запустить нагрузочное тестирование", type="primary"):
             # Проверяем есть ли исполнители
             executors = load_executors_from_db()
             if not executors:
                 st.error("❌ Нет исполнителей! Сначала добавьте исполнителей в разделе 'Исполнители'")
-            return
-    
+                return
+            
             # Запускаем тестирование в отдельном потоке
             test_thread = threading.Thread(
                 target=run_load_test_background,
@@ -993,6 +1046,7 @@ def render_load_test():
             test_thread.start()
             
             st.success("✅ Нагрузочное тестирование запущено в фоновом режиме! Вы можете переключаться между вкладками.")
+            time.sleep(0.5)  # Даем потоку запуститься
             st.rerun()
     
     # Статистика последнего теста
@@ -1023,7 +1077,7 @@ def render_settings():
         st.markdown("#### 📊 Настройки дашборда")
         auto_refresh = st.checkbox("Автообновление дашборда", value=st.session_state.get('auto_refresh', True))
         st.session_state.auto_refresh = auto_refresh
-        
+    
         if auto_refresh:
             st.info("✅ Дашборд обновляется каждые 2 секунды")
         else:
