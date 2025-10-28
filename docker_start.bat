@@ -10,7 +10,7 @@ echo.
 echo Для остановки нажмите Ctrl+C
 echo ========================================
 echo.
-docker-compose up
+docker-compose up -d
 echo Запущенно
 echo ========================================
 echo.
