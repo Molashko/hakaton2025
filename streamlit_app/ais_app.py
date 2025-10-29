@@ -296,7 +296,7 @@ def save_task_to_db(task):
     
     if has_params:
         # Новая схема с колонкой params
-    cur.execute("""
+        cur.execute("""
             INSERT INTO tasks(id,name,category,priority,created_at,data,params)
             VALUES(?,?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET
@@ -314,17 +314,17 @@ def save_task_to_db(task):
         # Старая схема без params
         cur.execute("""
             INSERT INTO tasks(id,name,category,priority,created_at,data)
-        VALUES(?,?,?,?,?,?)
-        ON CONFLICT(id) DO UPDATE SET
-            name=excluded.name,
+            VALUES(?,?,?,?,?,?)
+            ON CONFLICT(id) DO UPDATE SET
+                name=excluded.name,
                 category=excluded.category,
                 priority=excluded.priority,
-            created_at=excluded.created_at,
-            data=excluded.data
-    """, (
+                created_at=excluded.created_at,
+                data=excluded.data
+        """, (
             task['id'], task['name'], task.get('category',''), task.get('priority',''), 
             task['created_at'], _json_dumps(data)
-    ))
+        ))
     
     conn.commit()
     conn.close()
@@ -349,15 +349,15 @@ def save_executor_to_db(executor):
     
     if has_params:
         # Новая схема с колонкой params
-    cur.execute("""
+        cur.execute("""
             INSERT INTO executors(id,name,email,department,skills,active,daily_limit,assigned_today,created_at,data,params)
             VALUES(?,?,?,?,?,?,?,?,?,?,?)
-        ON CONFLICT(id) DO UPDATE SET
-            name=excluded.name,
-            email=excluded.email,
+            ON CONFLICT(id) DO UPDATE SET
+                name=excluded.name,
+                email=excluded.email,
                 department=excluded.department,
                 skills=excluded.skills,
-            active=excluded.active,
+                active=excluded.active,
                 daily_limit=excluded.daily_limit,
                 assigned_today=excluded.assigned_today,
                 created_at=excluded.created_at,
@@ -381,13 +381,13 @@ def save_executor_to_db(executor):
                 active=excluded.active,
                 daily_limit=excluded.daily_limit,
                 assigned_today=excluded.assigned_today,
-            created_at=excluded.created_at,
-            data=excluded.data
-    """, (
+                created_at=excluded.created_at,
+                data=excluded.data
+        """, (
             executor['id'], executor['name'], executor['email'], executor.get('department',''), skills_str, 
             1 if executor.get('active', True) else 0, executor.get('daily_limit', 10), 
             executor.get('assigned_today', 0), executor['created_at'], _json_dumps(data)
-    ))
+        ))
     
     conn.commit()
     conn.close()
@@ -790,10 +790,10 @@ def render_dashboard():
     
     with col_export2:
         if st.button("🔄 Обновить данные", use_container_width=True):
-                    st.session_state.tasks = load_tasks_from_db()
+            st.session_state.tasks = load_tasks_from_db()
             st.session_state.executors = load_executors_from_db()
             st.session_state.assignments = load_assignments_from_db()
-                    st.rerun()
+            st.rerun()
     
     st.markdown("---")
 
@@ -813,17 +813,17 @@ def render_dashboard():
                 if st.button("⏹️ Остановить"):
                     set_load_test_status('stopped')
                     st.rerun()
-        with col2:
+            with col2:
                 if st.button("🧪 Перейти к тестированию"):
                     st.session_state.current_page = "load_test"
-                st.rerun()
+                    st.rerun()
         
     # Автообновление
     auto_refresh_enabled = st.session_state.get('auto_refresh', True)
     if auto_refresh_enabled:
-                st.session_state.tasks = load_tasks_from_db()
+        st.session_state.tasks = load_tasks_from_db()
         st.session_state.executors = load_executors_from_db()
-                st.session_state.assignments = load_assignments_from_db()
+        st.session_state.assignments = load_assignments_from_db()
         
         # Автоматическое распределение нераспределенных заявок
         assigned_count = auto_assign_unassigned_tasks()
@@ -897,7 +897,7 @@ def render_dashboard():
                 value=f"{avg_load:.1f}",
                 delta=f"заявок/исполнитель"
             )
-                        else:
+        else:
             st.metric(label="📈 Средняя нагрузка", value="0")
     
     # Графики распределения
@@ -1203,7 +1203,7 @@ def render_executors_management():
                     if assigned_count > 0:
                         st.success(f"✅ Исполнитель обновлен! Автоматически назначено заявок: {assigned_count}")
                     else:
-                    st.success("✅ Исполнитель успешно обновлен!")
+                        st.success("✅ Исполнитель успешно обновлен!")
                     st.rerun()
                 else:
                     st.error("❌ Заполните обязательные поля")
@@ -1316,7 +1316,7 @@ def render_executors_management():
                             key=f"new_exec_param_edit_{key}",
                             label_visibility="collapsed"
                         )
-                        else:
+                    else:
                         params[key] = st.text_input(
                             f"value_{key}",
                             value=str(value),
@@ -1333,7 +1333,7 @@ def render_executors_management():
                 del params[key]
                 st.session_state.new_executor_params = params
                 st.rerun()
-                    else:
+        else:
             st.info("📝 Параметры не добавлены. Добавьте первый параметр выше.")
     
     st.markdown("---")
@@ -1373,7 +1373,7 @@ def render_executors_management():
             if assigned_count > 0:
                 st.success(f"✅ Исполнитель успешно добавлен! Автоматически назначено заявок: {assigned_count}")
             else:
-            st.success("✅ Исполнитель успешно добавлен!")
+                st.success("✅ Исполнитель успешно добавлен!")
             st.rerun()
         else:
             st.error("❌ Заполните обязательные поля")
@@ -1494,15 +1494,18 @@ def find_best_executor_simple(task, executors):
     for executor in active_executors:
         # Расчет score на основе утилизации
         utilization = executor['assigned_today'] / executor['daily_limit'] if executor['daily_limit'] > 0 else 0
-        fairness_score = 1.0 - utilization
         
-        # Бонус за совпадение отдела
-        department_bonus = 1.5 if executor.get('department') == task.get('category') else 1.0
+        # Fairness score - ОСНОВНОЙ вес (умножаем на 10 для усиления)
+        fairness_score = (1.0 - utilization) * 10.0
         
-        # Бонус за приоритет
-        priority_bonus = {'Критический': 2.0, 'Высокий': 1.5, 'Средний': 1.0, 'Низкий': 0.8}.get(task.get('priority', 'Средний'), 1.0)
+        # Бонус за совпадение отдела (небольшой аддитивный бонус)
+        department_bonus = 1.0 if executor.get('department') == task.get('category') else 0.0
         
-        final_score = fairness_score * department_bonus * priority_bonus
+        # Бонус за приоритет (небольшой аддитивный бонус)
+        priority_bonus = {'Критический': 0.5, 'Высокий': 0.3, 'Средний': 0.1, 'Низкий': 0.0}.get(task.get('priority', 'Средний'), 0.1)
+        
+        # Итоговый score = fairness (главный) + бонусы (дополнительные)
+        final_score = fairness_score + department_bonus + priority_bonus
         
         if final_score > best_score:
             best_score = final_score
@@ -1697,8 +1700,8 @@ def render_load_test():
                 set_load_test_status('stopped')
                 st.warning("Тестирование остановлено")
                 st.rerun()
-    
-    with col2:
+        
+        with col2:
             if st.button("🔄 Обновить", type="secondary"):
                 st.rerun()
     
@@ -1778,7 +1781,7 @@ def render_load_test():
         st.metric("Всего назначений", len(st.session_state.assignments))
     
     with col3:
-    active_executors = [e for e in st.session_state.executors if e.get('active', True)]
+        active_executors = [e for e in st.session_state.executors if e.get('active', True)]
         total_assigned_today = sum(e['assigned_today'] for e in active_executors)
         st.metric("Всего назначено сегодня", total_assigned_today)
 
