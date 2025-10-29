@@ -1,0 +1,173 @@
+{
+  "version": "1.0",
+  "description": "Правила матчинга заявок и исполнителей",
+  "default_weight": 1.0,
+  
+  "rules": [
+    {
+      "id": "fairness_distribution",
+      "description": "Справедливое распределение - приоритет менее загруженным",
+      "formula": "1.0 - (executor.assigned_count / executor.max_assignments)",
+      "weight": 20,
+      "category": "fairness"
+    },
+    {
+      "id": "department_match",
+      "description": "Соответствие отдела категории заявки",
+      "condition": {
+        "type": "equals",
+        "executor_field": "department",
+        "task_field": "category"
+      },
+      "score_multiplier": 1.5,
+      "weight": 10,
+      "category": "matching"
+    },
+    {
+      "id": "priority_critical",
+      "description": "Критический приоритет - максимальный бонус",
+      "condition": {
+        "type": "equals",
+        "task_field": "priority",
+        "executor_field": "priority"
+      },
+      "score_multiplier": 2.0,
+      "weight": 15,
+      "category": "priority",
+      "note": "Это правило не будет работать без executor.priority, оставлено для примера"
+    },
+    {
+      "id": "skill_match",
+      "description": "Навыки исполнителя содержат требуемые навыки",
+      "condition": {
+        "type": "array_contains",
+        "executor_field": "params.skills",
+        "task_field": "params.required_skills",
+        "optional": true
+      },
+      "score_multiplier": 1.5,
+      "weight": 12,
+      "category": "skills"
+    },
+    {
+      "id": "experience_sufficient",
+      "description": "Опыт исполнителя достаточен для заявки",
+      "condition": {
+        "type": "greater_or_equal",
+        "executor_field": "params.experience_years",
+        "task_field": "params.min_experience_years",
+        "optional": true
+      },
+      "score_multiplier": 1.3,
+      "weight": 8,
+      "category": "experience"
+    },
+    {
+      "id": "complexity_match",
+      "description": "Исполнитель может обработать сложность заявки",
+      "condition": {
+        "type": "greater_or_equal",
+        "executor_field": "params.max_complexity",
+        "task_field": "params.complexity",
+        "optional": true
+      },
+      "score_multiplier": 1.2,
+      "weight": 7,
+      "category": "complexity"
+    },
+    {
+      "id": "location_match",
+      "description": "Исполнитель в том же городе что и заявка",
+      "condition": {
+        "type": "equals",
+        "executor_field": "params.location",
+        "task_field": "params.location",
+        "optional": true
+      },
+      "score_multiplier": 1.4,
+      "weight": 6,
+      "category": "location"
+    },
+    {
+      "id": "remote_work_available",
+      "description": "Исполнитель может работать удаленно",
+      "condition": {
+        "type": "equals",
+        "executor_field": "params.remote_available",
+        "task_field": "params.remote_work",
+        "optional": true
+      },
+      "score_multiplier": 1.1,
+      "weight": 3,
+      "category": "remote"
+    },
+    {
+      "id": "rating_bonus",
+      "description": "Бонус за высокий рейтинг исполнителя",
+      "formula": "executor.rating / 5.0",
+      "weight": 5,
+      "category": "quality"
+    },
+    {
+      "id": "active_executor",
+      "description": "Только активные исполнители",
+      "condition": {
+        "type": "equals",
+        "executor_field": "is_active",
+        "task_field": "is_active"
+      },
+      "score_multiplier": 1.0,
+      "weight": 100,
+      "category": "availability",
+      "note": "Это правило проверит is_active=1, но нужно передать task.is_active=1"
+    },
+    {
+      "id": "budget_match",
+      "description": "Ставка исполнителя в пределах бюджета",
+      "condition": {
+        "type": "less_or_equal",
+        "executor_field": "params.hourly_rate",
+        "task_field": "params.max_hourly_rate",
+        "optional": true
+      },
+      "score_multiplier": 1.2,
+      "weight": 5,
+      "category": "budget"
+    },
+    {
+      "id": "certification_match",
+      "description": "У исполнителя есть требуемые сертификаты",
+      "condition": {
+        "type": "array_intersects",
+        "executor_field": "params.certifications",
+        "task_field": "params.required_certifications",
+        "optional": true
+      },
+      "score_multiplier": 1.3,
+      "weight": 6,
+      "category": "certifications"
+    },
+    {
+      "id": "equipment_available",
+      "description": "У исполнителя есть необходимое оборудование",
+      "condition": {
+        "type": "array_contains",
+        "executor_field": "params.equipment_available",
+        "task_field": "params.equipment_needed",
+        "optional": true
+      },
+      "score_multiplier": 1.6,
+      "weight": 10,
+      "category": "equipment"
+    }
+  ],
+  
+  "notes": [
+    "Правила применяются в порядке приоритета (weight)",
+    "Правила с optional=true не блокируют матчинг если параметры отсутствуют",
+    "Score вычисляется как сумма: (formula или score_multiplier) × weight",
+    "Исполнитель с максимальным score получает заявку",
+    "Можно добавлять новые правила без изменения кода!"
+  ]
+}
+

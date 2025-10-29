@@ -10,6 +10,16 @@ import sqlite3
 import random
 import time
 import threading
+import sys
+
+# Добавляем путь к scripts для импорта Rule Engine
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'scripts'))
+try:
+    from rule_engine import RuleEngine
+    RULE_ENGINE_AVAILABLE = True
+except ImportError:
+    RULE_ENGINE_AVAILABLE = False
+    print("[WARN] Rule Engine не найден, используется простой алгоритм")
 
 # Конфигурация страницы
 st.set_page_config(
@@ -177,7 +187,17 @@ def _json_loads(s):
 def load_tasks_from_db():
     conn = get_sqlite_conn()
     cur = conn.cursor()
-    cur.execute("SELECT id,name,category,priority,created_at,data FROM tasks ORDER BY datetime(created_at) DESC")
+    
+    # Проверяем наличие колонки params
+    cur.execute("PRAGMA table_info(tasks)")
+    columns = [col[1] for col in cur.fetchall()]
+    has_params = 'params' in columns
+    
+    if has_params:
+        cur.execute("SELECT id,name,category,priority,created_at,data,params FROM tasks ORDER BY datetime(created_at) DESC")
+    else:
+        cur.execute("SELECT id,name,category,priority,created_at,data FROM tasks ORDER BY datetime(created_at) DESC")
+    
     rows = cur.fetchall()
     conn.close()
     tasks = []
@@ -189,14 +209,33 @@ def load_tasks_from_db():
             'priority': r['priority'],
             'created_at': r['created_at'] or datetime.now().isoformat()
         }
+        
+        # Загружаем дополнительные данные из data (для обратной совместимости)
         t.update(_json_loads(r['data']))
+        
+        # Загружаем params если колонка есть
+        if has_params and r['params']:
+            params = _json_loads(r['params'])
+            if params:
+                t['params'] = params
+        
         tasks.append(t)
     return tasks
 
 def load_executors_from_db():
     conn = get_sqlite_conn()
     cur = conn.cursor()
-    cur.execute("SELECT id,name,email,department,skills,active,daily_limit,assigned_today,created_at,data FROM executors ORDER BY name")
+    
+    # Проверяем наличие колонки params
+    cur.execute("PRAGMA table_info(executors)")
+    columns = [col[1] for col in cur.fetchall()]
+    has_params = 'params' in columns
+    
+    if has_params:
+        cur.execute("SELECT id,name,email,department,skills,active,daily_limit,assigned_today,created_at,data,params FROM executors ORDER BY name")
+    else:
+        cur.execute("SELECT id,name,email,department,skills,active,daily_limit,assigned_today,created_at,data FROM executors ORDER BY name")
+    
     rows = cur.fetchall()
     conn.close()
     executors = []
@@ -212,7 +251,16 @@ def load_executors_from_db():
             'assigned_today': r['assigned_today'],
             'created_at': r['created_at'] or datetime.now().isoformat()
         }
+        
+        # Загружаем дополнительные данные из data (для обратной совместимости)
         e.update(_json_loads(r['data']))
+        
+        # Загружаем params если колонка есть
+        if has_params and r['params']:
+            params = _json_loads(r['params'])
+            if params:
+                e['params'] = params
+        
         executors.append(e)
     return executors
 
@@ -233,20 +281,51 @@ def load_assignments_from_db():
 def save_task_to_db(task):
     conn = get_sqlite_conn()
     cur = conn.cursor()
-    base_keys = ['id','name','category','priority','created_at']
+    
+    # Проверяем наличие колонки params
+    cur.execute("PRAGMA table_info(tasks)")
+    columns = [col[1] for col in cur.fetchall()]
+    has_params = 'params' in columns
+    
+    base_keys = ['id','name','category','priority','created_at','params']
     data = {k: v for k, v in task.items() if k not in base_keys}
-    cur.execute("""
-        INSERT INTO tasks(id,name,category,priority,created_at,data)
-        VALUES(?,?,?,?,?,?)
-        ON CONFLICT(id) DO UPDATE SET
-            name=excluded.name,
-            category=excluded.category,
-            priority=excluded.priority,
-            created_at=excluded.created_at,
-            data=excluded.data
-    """, (
-        task['id'], task['name'], task.get('category',''), task.get('priority',''), task['created_at'], _json_dumps(data)
-    ))
+    
+    # Получаем params
+    params = task.get('params', {})
+    params_json = _json_dumps(params) if params else '{}'
+    
+    if has_params:
+        # Новая схема с колонкой params
+        cur.execute("""
+            INSERT INTO tasks(id,name,category,priority,created_at,data,params)
+            VALUES(?,?,?,?,?,?,?)
+            ON CONFLICT(id) DO UPDATE SET
+                name=excluded.name,
+                category=excluded.category,
+                priority=excluded.priority,
+                created_at=excluded.created_at,
+                data=excluded.data,
+                params=excluded.params
+        """, (
+            task['id'], task['name'], task.get('category',''), task.get('priority',''), 
+            task['created_at'], _json_dumps(data), params_json
+        ))
+    else:
+        # Старая схема без params
+        cur.execute("""
+            INSERT INTO tasks(id,name,category,priority,created_at,data)
+            VALUES(?,?,?,?,?,?)
+            ON CONFLICT(id) DO UPDATE SET
+                name=excluded.name,
+                category=excluded.category,
+                priority=excluded.priority,
+                created_at=excluded.created_at,
+                data=excluded.data
+        """, (
+            task['id'], task['name'], task.get('category',''), task.get('priority',''), 
+            task['created_at'], _json_dumps(data)
+        ))
+    
     conn.commit()
     conn.close()
     return True
@@ -254,27 +333,62 @@ def save_task_to_db(task):
 def save_executor_to_db(executor):
     conn = get_sqlite_conn()
     cur = conn.cursor()
-    base_keys = ['id','name','email','department','skills','active','daily_limit','assigned_today','created_at']
+    
+    # Проверяем наличие колонки params
+    cur.execute("PRAGMA table_info(executors)")
+    columns = [col[1] for col in cur.fetchall()]
+    has_params = 'params' in columns
+    
+    base_keys = ['id','name','email','department','skills','active','daily_limit','assigned_today','created_at','params']
     data = {k: v for k, v in executor.items() if k not in base_keys}
     skills_str = ','.join(executor.get('skills', [])) if isinstance(executor.get('skills'), list) else executor.get('skills', '')
-    cur.execute("""
-        INSERT INTO executors(id,name,email,department,skills,active,daily_limit,assigned_today,created_at,data)
-        VALUES(?,?,?,?,?,?,?,?,?,?)
+    
+    # Получаем params
+    params = executor.get('params', {})
+    params_json = _json_dumps(params) if params else '{}'
+    
+    if has_params:
+        # Новая схема с колонкой params
+     cur.execute("""
+            INSERT INTO executors(id,name,email,department,skills,active,daily_limit,assigned_today,created_at,data,params)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(id) DO UPDATE SET
             name=excluded.name,
             email=excluded.email,
-            department=excluded.department,
-            skills=excluded.skills,
+                department=excluded.department,
+                skills=excluded.skills,
             active=excluded.active,
-            daily_limit=excluded.daily_limit,
-            assigned_today=excluded.assigned_today,
+                daily_limit=excluded.daily_limit,
+                assigned_today=excluded.assigned_today,
+                created_at=excluded.created_at,
+                data=excluded.data,
+                params=excluded.params
+        """, (
+            executor['id'], executor['name'], executor['email'], executor.get('department',''), skills_str, 
+            1 if executor.get('active', True) else 0, executor.get('daily_limit', 10), 
+            executor.get('assigned_today', 0), executor['created_at'], _json_dumps(data), params_json
+        ))
+    else:
+        # Старая схема без params (для обратной совместимости)
+        cur.execute("""
+            INSERT INTO executors(id,name,email,department,skills,active,daily_limit,assigned_today,created_at,data)
+            VALUES(?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(id) DO UPDATE SET
+                name=excluded.name,
+                email=excluded.email,
+                department=excluded.department,
+                skills=excluded.skills,
+                active=excluded.active,
+                daily_limit=excluded.daily_limit,
+                assigned_today=excluded.assigned_today,
             created_at=excluded.created_at,
             data=excluded.data
     """, (
-        executor['id'], executor['name'], executor['email'], executor.get('department',''), skills_str, 
-        1 if executor.get('active', True) else 0, executor.get('daily_limit', 10), 
-        executor.get('assigned_today', 0), executor['created_at'], _json_dumps(data)
+            executor['id'], executor['name'], executor['email'], executor.get('department',''), skills_str, 
+            1 if executor.get('active', True) else 0, executor.get('daily_limit', 10), 
+            executor.get('assigned_today', 0), executor['created_at'], _json_dumps(data)
     ))
+    
     conn.commit()
     conn.close()
     return True
@@ -527,7 +641,7 @@ def render_dashboard():
         
         # Статистические метрики распределения
         st.markdown("#### 📈 Статистика распределения")
-        stat_col1, stat_col2, stat_col3, stat_col4 = st.columns(4)
+        stat_col1, stat_col2, stat_col3 = st.columns(3)
         
         with stat_col1:
             st.metric(
@@ -551,21 +665,6 @@ def render_dashboard():
                 value=f"{range_utilization:.1f}%",
                 delta=f"Min: {min_utilization:.1f}%, Max: {max_utilization:.1f}%",
                 help="Разница между максимальной и минимальной утилизацией"
-            )
-        
-        with stat_col4:
-            # Оценка качества распределения
-            if std_utilization < 5:
-                quality = "Отлично ✅"
-            elif std_utilization < 10:
-                quality = "Хорошо 👍"
-            else:
-                quality = "Требует оптимизации ⚠️"
-            
-            st.metric(
-                label="🎯 Качество",
-                value=quality,
-                help=f"Оценка равномерности распределения (на основе σ = {std_utilization:.2f}%)"
             )
         
         st.markdown("---")
@@ -681,6 +780,108 @@ def render_executors_management():
             daily_limit = st.number_input("Дневной лимит заявок", min_value=1, max_value=100, value=executor_to_edit.get('daily_limit', 10), key="edit_daily_limit")
             active = st.checkbox("Активен", value=executor_to_edit.get('active', True), key="edit_active")
         
+        # Дополнительные параметры
+        st.markdown("### 🎯 Дополнительные параметры")
+        
+        with st.expander("📝 Управление параметрами", expanded=True):
+            # Получаем текущие параметры
+            current_params = executor_to_edit.get('params', {})
+            if isinstance(current_params, str):
+                try:
+                    current_params = json.loads(current_params)
+                except:
+                    current_params = {}
+            
+            # Инициализируем в session_state если нет
+            if f"edit_params_{editing_executor_id}" not in st.session_state:
+                st.session_state[f"edit_params_{editing_executor_id}"] = current_params.copy()
+            
+            params = st.session_state[f"edit_params_{editing_executor_id}"]
+            
+            # Добавление нового параметра
+            st.markdown("**Добавить новый параметр:**")
+            col_p1, col_p2, col_p3, col_p4 = st.columns([2, 2, 2, 1])
+            
+            with col_p1:
+                new_param_key = st.text_input("Ключ", key=f"edit_new_param_key_{editing_executor_id}", 
+                                             placeholder="например: experience_years")
+            
+            with col_p2:
+                param_type = st.selectbox("Тип", ["Текст", "Число", "Список"], key=f"edit_param_type_{editing_executor_id}")
+            
+            with col_p3:
+                if param_type == "Текст":
+                    new_param_value = st.text_input("Значение", key=f"edit_new_param_value_{editing_executor_id}",
+                                                   placeholder="например: Senior")
+                elif param_type == "Число":
+                    new_param_value = st.number_input("Значение", key=f"edit_new_param_value_num_{editing_executor_id}",
+                                                     value=0)
+                else:  # Список
+                    new_param_value_str = st.text_input("Значения (через запятую)", 
+                                                        key=f"edit_new_param_value_list_{editing_executor_id}",
+                                                        placeholder="например: AWS, Python")
+                    new_param_value = [v.strip() for v in new_param_value_str.split(',') if v.strip()] if new_param_value_str else []
+            
+            with col_p4:
+                st.write("")
+                st.write("")
+                if st.button("➕", key=f"edit_add_param_{editing_executor_id}", help="Добавить параметр"):
+                    if new_param_key and new_param_key not in params:
+                        params[new_param_key] = new_param_value
+                        st.session_state[f"edit_params_{editing_executor_id}"] = params
+                        st.rerun()
+                    elif new_param_key in params:
+                        st.error(f"Параметр '{new_param_key}' уже существует!")
+            
+            # Отображение существующих параметров
+            if params:
+                st.markdown("---")
+                st.markdown("**Текущие параметры:**")
+                
+                params_to_delete = []
+                for key, value in params.items():
+                    col_k, col_v, col_d = st.columns([2, 4, 1])
+                    
+                    with col_k:
+                        st.markdown(f"**{key}:**")
+                    
+                    with col_v:
+                        # Определяем тип значения
+                        if isinstance(value, list):
+                            new_value = st.text_input(
+                                f"value_{key}", 
+                                value=", ".join(str(v) for v in value),
+                                key=f"edit_param_edit_{editing_executor_id}_{key}",
+                                label_visibility="collapsed"
+                            )
+                            params[key] = [v.strip() for v in new_value.split(',') if v.strip()]
+                        elif isinstance(value, (int, float)):
+                            params[key] = st.number_input(
+                                f"value_{key}",
+                                value=float(value),
+                                key=f"edit_param_edit_{editing_executor_id}_{key}",
+                                label_visibility="collapsed"
+                            )
+                        else:
+                            params[key] = st.text_input(
+                                f"value_{key}",
+                                value=str(value),
+                                key=f"edit_param_edit_{editing_executor_id}_{key}",
+                                label_visibility="collapsed"
+                            )
+                    
+                    with col_d:
+                        if st.button("🗑️", key=f"edit_delete_param_{editing_executor_id}_{key}", help=f"Удалить {key}"):
+                            params_to_delete.append(key)
+                
+                # Удаляем помеченные параметры
+                for key in params_to_delete:
+                    del params[key]
+                    st.session_state[f"edit_params_{editing_executor_id}"] = params
+                    st.rerun()
+            else:
+                st.info("📝 Параметры не добавлены. Добавьте первый параметр выше.")
+        
         st.markdown("---")
         
         col1, col2, col3 = st.columns(3)
@@ -695,7 +896,15 @@ def render_executors_management():
                     executor_to_edit['daily_limit'] = daily_limit
                     executor_to_edit['active'] = active
                     
+                    # Сохраняем параметры
+                    if f"edit_params_{editing_executor_id}" in st.session_state:
+                        executor_to_edit['params'] = st.session_state[f"edit_params_{editing_executor_id}"]
+                    
                     save_executor_to_db(executor_to_edit)
+                    
+                    # Очищаем session_state
+                    if f"edit_params_{editing_executor_id}" in st.session_state:
+                        del st.session_state[f"edit_params_{editing_executor_id}"]
                     st.session_state[f"editing_executor_{editing_executor_id}"] = False
                     st.session_state.executors = load_executors_from_db()
                     
@@ -717,6 +926,9 @@ def render_executors_management():
         with col2:
             if st.button("❌ Отменить", type="secondary"):
                 st.session_state[f"editing_executor_{editing_executor_id}"] = False
+                # Очищаем session_state параметров
+                if f"edit_params_{editing_executor_id}" in st.session_state:
+                    del st.session_state[f"edit_params_{editing_executor_id}"]
                 st.rerun()
         
         with col3:
@@ -745,6 +957,100 @@ def render_executors_management():
         daily_limit = st.number_input("Дневной лимит заявок", min_value=1, max_value=100, value=10)
         active = st.checkbox("Активен", value=True)
     
+    # Дополнительные параметры для нового исполнителя
+    st.markdown("### 🎯 Дополнительные параметры")
+    
+    with st.expander("📝 Управление параметрами", expanded=False):
+        # Инициализируем в session_state если нет
+        if "new_executor_params" not in st.session_state:
+            st.session_state.new_executor_params = {}
+        
+        params = st.session_state.new_executor_params
+        
+        # Добавление нового параметра
+        st.markdown("**Добавить новый параметр:**")
+        col_p1, col_p2, col_p3, col_p4 = st.columns([2, 2, 2, 1])
+        
+        with col_p1:
+            new_param_key = st.text_input("Ключ", key="new_exec_param_key", 
+                                         placeholder="например: experience_years")
+        
+        with col_p2:
+            param_type = st.selectbox("Тип", ["Текст", "Число", "Список"], key="new_exec_param_type")
+        
+        with col_p3:
+            if param_type == "Текст":
+                new_param_value = st.text_input("Значение", key="new_exec_param_value",
+                                               placeholder="например: Senior")
+            elif param_type == "Число":
+                new_param_value = st.number_input("Значение", key="new_exec_param_value_num",
+                                                 value=0)
+            else:  # Список
+                new_param_value_str = st.text_input("Значения (через запятую)", 
+                                                    key="new_exec_param_value_list",
+                                                    placeholder="например: AWS, Python")
+                new_param_value = [v.strip() for v in new_param_value_str.split(',') if v.strip()] if new_param_value_str else []
+        
+        with col_p4:
+            st.write("")
+            st.write("")
+            if st.button("➕", key="new_exec_add_param", help="Добавить параметр"):
+                if new_param_key and new_param_key not in params:
+                    params[new_param_key] = new_param_value
+                    st.session_state.new_executor_params = params
+                    st.rerun()
+                elif new_param_key in params:
+                    st.error(f"Параметр '{new_param_key}' уже существует!")
+        
+        # Отображение существующих параметров
+        if params:
+            st.markdown("---")
+            st.markdown("**Текущие параметры:**")
+            
+            params_to_delete = []
+            for key, value in params.items():
+                col_k, col_v, col_d = st.columns([2, 4, 1])
+                
+                with col_k:
+                    st.markdown(f"**{key}:**")
+                
+                with col_v:
+                    # Определяем тип значения
+                    if isinstance(value, list):
+                        new_value = st.text_input(
+                            f"value_{key}", 
+                            value=", ".join(str(v) for v in value),
+                            key=f"new_exec_param_edit_{key}",
+                            label_visibility="collapsed"
+                        )
+                        params[key] = [v.strip() for v in new_value.split(',') if v.strip()]
+                    elif isinstance(value, (int, float)):
+                        params[key] = st.number_input(
+                            f"value_{key}",
+                            value=float(value),
+                            key=f"new_exec_param_edit_{key}",
+                            label_visibility="collapsed"
+                        )
+                    else:
+                        params[key] = st.text_input(
+                            f"value_{key}",
+                            value=str(value),
+                            key=f"new_exec_param_edit_{key}",
+                            label_visibility="collapsed"
+                        )
+                
+                with col_d:
+                    if st.button("🗑️", key=f"new_exec_delete_param_{key}", help=f"Удалить {key}"):
+                        params_to_delete.append(key)
+            
+            # Удаляем помеченные параметры
+            for key in params_to_delete:
+                del params[key]
+                st.session_state.new_executor_params = params
+                st.rerun()
+            else:
+                st.info("📝 Параметры не добавлены. Добавьте первый параметр выше.")
+    
     st.markdown("---")
     
     if st.button("👥 Добавить исполнителя", type="primary"):
@@ -760,7 +1066,16 @@ def render_executors_management():
                 'assigned_today': 0,
                 'created_at': datetime.now().isoformat()
             }
+            
+            # Добавляем параметры если есть
+            if st.session_state.new_executor_params:
+                new_executor['params'] = st.session_state.new_executor_params.copy()
+            
             save_executor_to_db(new_executor)
+            
+            # Очищаем session_state параметров
+            st.session_state.new_executor_params = {}
+            
             st.session_state.executors = load_executors_from_db()
             
             # Автоматически распределяем нераспределенные заявки
@@ -791,6 +1106,20 @@ def render_executors_management():
                     st.markdown(f"**{status_color} {executor['name']}**")
                     st.markdown(f"**Email:** {executor['email']} | **Отдел:** {executor['department']}")
                     st.markdown(f"**Навыки:** {', '.join(executor['skills'])} | **Назначено сегодня:** {executor['assigned_today']}/{executor['daily_limit']}")
+                    
+                    # Отображаем дополнительные параметры если есть
+                    params = executor.get('params', {})
+                    if isinstance(params, str):
+                        try:
+                            params = json.loads(params)
+                        except:
+                            params = {}
+                    
+                    if params:
+                        params_str = " | ".join([f"{k}: {v}" for k, v in list(params.items())[:3]])
+                        if len(params) > 3:
+                            params_str += f" | +{len(params)-3} еще"
+                        st.markdown(f"**📝 Параметры:** {params_str}")
                 
                 with col2:
                     if st.button(f"✏️ Редактировать", key=f"edit_exec_{executor['id']}"):
@@ -810,12 +1139,70 @@ def render_executors_management():
         st.info("👥 Исполнителей пока нет. Добавьте первого исполнителя выше.")
 
 # Нагрузочное тестирование
+def load_rule_engine():
+    """Загрузить Rule Engine из конфигурации"""
+    config_path = os.path.join(os.path.dirname(__file__), '..', 'config', 'matching_rules.json')
+    
+    if not os.path.exists(config_path):
+        print(f"[WARN] Конфигурация правил не найдена: {config_path}")
+        return None
+    
+    try:
+        with open(config_path, 'r', encoding='utf-8') as f:
+            config = json.load(f)
+        
+        engine = RuleEngine(config)
+        print(f"[OK] Rule Engine загружен, правил: {len(config.get('rules', []))}")
+        return engine
+    except Exception as e:
+        print(f"[ERROR] Ошибка загрузки Rule Engine: {e}")
+        return None
+
+
 def find_best_executor_simple(task, executors):
-    """Простой алгоритм поиска лучшего исполнителя"""
+    """
+    Алгоритм поиска лучшего исполнителя
+    Поддерживает:
+    - Простой алгоритм (если Rule Engine недоступен)
+    - Rule Engine (если доступен и настроен)
+    """
+    # Фильтруем только активных исполнителей с доступными слотами
     active_executors = [e for e in executors if e.get('active', True) and e['assigned_today'] < e['daily_limit']]
     if not active_executors:
         return None
     
+    # Пробуем использовать Rule Engine
+    if RULE_ENGINE_AVAILABLE:
+        try:
+            engine = load_rule_engine()
+            if engine:
+                # Подготовка данных для Rule Engine
+                # Обогащаем данные для использования в формулах
+                for executor in active_executors:
+                    executor['assigned_count'] = executor.get('assigned_today', 0)
+                    executor['max_assignments'] = executor.get('daily_limit', 10)
+                    # Добавляем params из data если есть
+                    if 'params' not in executor and 'data' in executor:
+                        executor['params'] = executor.get('data', {})
+                
+                # Добавляем params к заявке
+                if 'params' not in task and 'data' in task:
+                    task['params'] = task.get('data', {})
+                
+                # Добавляем is_active для правила active_executor
+                task['is_active'] = 1
+                
+                # Используем Rule Engine
+                result = engine.find_best_match(task, active_executors)
+                
+                if result:
+                    executor, score, matched_rules = result
+                    print(f"[Rule Engine] Score: {score:.2f}, Правил: {len(matched_rules)}")
+                    return executor, score
+        except Exception as e:
+            print(f"[WARN] Rule Engine error: {e}, fallback to simple algorithm")
+    
+    # Fallback: простой алгоритм
     best_executor = None
     best_score = -1.0
     
@@ -910,11 +1297,56 @@ def run_load_test_background(num_tasks, batch_size, delay_ms):
             
             for j in range(current_batch_size):
                 task_id = str(uuid.uuid4())
+                category = random.choice(categories)
+                priority = random.choice(priorities)
+                
+                # Генерируем параметры в зависимости от категории
+                params = {}
+                
+                if category == "IT":
+                    # IT параметры
+                    all_skills = ["Python", "JavaScript", "React", "FastAPI", "Docker", "PostgreSQL", "AWS"]
+                    params = {
+                        'required_skills': random.sample(all_skills, random.randint(1, 3)),
+                        'min_experience_years': random.choice([1, 2, 3, 5, 7]),
+                        'complexity': random.randint(1, 10),
+                        'remote_work': random.choice([True, False]),
+                        'max_hourly_rate': random.choice([3000, 4000, 5000, 6000])
+                    }
+                
+                elif category == "Строительство":
+                    # Строительство параметры
+                    params = {
+                        'location': random.choice(["Москва", "Санкт-Петербург", "Казань", "Екатеринбург"]),
+                        'equipment_needed': random.sample(["Кран", "Экскаватор", "Бетономешалка"], random.randint(1, 2)),
+                        'square_meters': random.choice([500, 1000, 1500, 2000, 3000]),
+                        'floor_count': random.randint(1, 10)
+                    }
+                
+                elif category == "Страхование":
+                    # Страхование параметры
+                    params = {
+                        'insurance_types': random.sample(["ОСАГО", "КАСКО", "Жизнь", "Имущество"], random.randint(1, 2)),
+                        'vehicle_year': random.choice([2018, 2019, 2020, 2021, 2022, 2023]),
+                        'driver_age': random.randint(25, 65),
+                        'accident_history': random.choice([True, False])
+                    }
+                
+                elif category == "Консалтинг":
+                    # Консалтинг параметры
+                    params = {
+                        'required_certifications': random.sample(["PMP", "Agile", "PRINCE2", "Scrum Master"], random.randint(1, 2)),
+                        'project_duration_months': random.choice([1, 3, 6, 12, 24]),
+                        'team_size': random.randint(5, 50),
+                        'industry': random.choice(["Финансы", "Производство", "Ритейл", "IT"])
+                    }
+                
                 task = {
                     'id': task_id,
                     'name': f"Заявка #{total_generated + j + 1}",
-                    'category': random.choice(categories),
-                    'priority': random.choice(priorities),
+                    'category': category,
+                    'priority': priority,
+                    'params': params,
                     'created_at': datetime.now().isoformat()
                 }
                 
@@ -980,6 +1412,7 @@ def render_load_test():
                 set_load_test_status('stopped')
                 st.warning("Тестирование остановлено")
                 st.rerun()
+        
         with col2:
             if st.button("🔄 Обновить", type="secondary"):
                 st.rerun()
@@ -998,9 +1431,8 @@ def render_load_test():
         
         if st.button("🔄 Запустить новое тестирование"):
             set_load_test_status('idle')
+            st.balloons()
             st.rerun()
-        
-        st.balloons()
     
     elif test_status == 'error':
         error_msg = test_status_data['message']
@@ -1018,36 +1450,36 @@ def render_load_test():
         Этот инструмент позволяет сгенерировать большое количество заявок для демонстрации работы системы распределения под нагрузкой.
         **Тестирование работает в фоновом режиме - вы сможете переключаться между вкладками!**
         """)
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        num_tasks = st.number_input("Количество заявок для генерации", min_value=10, max_value=10000, value=100, step=10)
+        batch_size = st.number_input("Размер батча (заявок за раз)", min_value=1, max_value=100, value=10)
+    
+    with col2:
+        delay_ms = st.slider("Задержка между батчами (мс)", min_value=0, max_value=1000, value=100, step=50)
+    
+    st.markdown("---")
+    
+    if st.button("🚀 Запустить нагрузочное тестирование", type="primary"):
+        # Проверяем есть ли исполнители
+        executors = load_executors_from_db()
+        if not executors:
+            st.error("❌ Нет исполнителей! Сначала добавьте исполнителей в разделе 'Исполнители'")
+            return
         
-        col1, col2 = st.columns(2)
+        # Запускаем тестирование в отдельном потоке
+        test_thread = threading.Thread(
+            target=run_load_test_background,
+            args=(num_tasks, batch_size, delay_ms),
+            daemon=True
+        )
+        test_thread.start()
         
-        with col1:
-            num_tasks = st.number_input("Количество заявок для генерации", min_value=10, max_value=10000, value=100, step=10)
-            batch_size = st.number_input("Размер батча (заявок за раз)", min_value=1, max_value=100, value=10)
-        
-        with col2:
-            delay_ms = st.slider("Задержка между батчами (мс)", min_value=0, max_value=1000, value=100, step=50)
-        
-        st.markdown("---")
-        
-        if st.button("🚀 Запустить нагрузочное тестирование", type="primary"):
-            # Проверяем есть ли исполнители
-            executors = load_executors_from_db()
-            if not executors:
-                st.error("❌ Нет исполнителей! Сначала добавьте исполнителей в разделе 'Исполнители'")
-                return
-            
-            # Запускаем тестирование в отдельном потоке
-            test_thread = threading.Thread(
-                target=run_load_test_background,
-                args=(num_tasks, batch_size, delay_ms),
-                daemon=True
-            )
-            test_thread.start()
-            
-            st.success("✅ Нагрузочное тестирование запущено в фоновом режиме! Вы можете переключаться между вкладками.")
-            time.sleep(0.5)  # Даем потоку запуститься
-            st.rerun()
+        st.success("✅ Нагрузочное тестирование запущено в фоновом режиме! Вы можете переключаться между вкладками.")
+        time.sleep(0.5)  # Даем потоку запуститься
+        st.rerun()
     
     # Статистика последнего теста
     st.markdown("### 📊 Текущая статистика")
