@@ -315,16 +315,16 @@ def save_task_to_db(task):
         cur.execute("""
             INSERT INTO tasks(id,name,category,priority,created_at,data)
             VALUES(?,?,?,?,?,?)
-            ON CONFLICT(id) DO UPDATE SET
-                name=excluded.name,
+        ON CONFLICT(id) DO UPDATE SET
+            name=excluded.name,
                 category=excluded.category,
                 priority=excluded.priority,
-                created_at=excluded.created_at,
-                data=excluded.data
-        """, (
+            created_at=excluded.created_at,
+            data=excluded.data
+    """, (
             task['id'], task['name'], task.get('category',''), task.get('priority',''), 
             task['created_at'], _json_dumps(data)
-        ))
+    ))
     
     conn.commit()
     conn.close()
@@ -349,15 +349,15 @@ def save_executor_to_db(executor):
     
     if has_params:
         # Новая схема с колонкой params
-     cur.execute("""
+        cur.execute("""
             INSERT INTO executors(id,name,email,department,skills,active,daily_limit,assigned_today,created_at,data,params)
             VALUES(?,?,?,?,?,?,?,?,?,?,?)
-        ON CONFLICT(id) DO UPDATE SET
-            name=excluded.name,
-            email=excluded.email,
+            ON CONFLICT(id) DO UPDATE SET
+                name=excluded.name,
+                email=excluded.email,
                 department=excluded.department,
                 skills=excluded.skills,
-            active=excluded.active,
+                active=excluded.active,
                 daily_limit=excluded.daily_limit,
                 assigned_today=excluded.assigned_today,
                 created_at=excluded.created_at,
@@ -509,8 +509,293 @@ def _aggregate_per_minute(items, timestamp_key, window_minutes=5):
         'Количество': [buckets[t] for t in times],
     })
 
+def export_dashboard_to_excel():
+    """
+    Экспортирует все метрики дашборда в Excel файл с диаграммами
+    Возвращает байты файла для скачивания
+    """
+    from io import BytesIO
+    from openpyxl.chart import BarChart, LineChart, PieChart, Reference
+    from openpyxl.chart.label import DataLabelList
+    from openpyxl.utils import get_column_letter
+    
+    tasks = st.session_state.tasks
+    executors = st.session_state.executors
+    assignments = st.session_state.assignments
+    active_executors = [e for e in executors if e.get('active', True)]
+    
+    # Создаем Excel writer
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        
+        # === Лист 1: Общие метрики ===
+        if active_executors:
+            total_assigned = sum(e['assigned_today'] for e in active_executors)
+            avg_load = total_assigned / len(active_executors)
+            
+            # Расчет MAE
+            utilizations = [e['assigned_today'] / e['daily_limit'] if e['daily_limit'] > 0 else 0 for e in active_executors]
+            avg_util = sum(utilizations) / len(utilizations)
+            mae = sum(abs(u - avg_util) for u in utilizations) / len(utilizations)
+            
+            # Статистика
+            utilizations_pct = [u * 100 for u in utilizations]
+            avg_utilization = sum(utilizations_pct) / len(utilizations_pct)
+            std_utilization = pd.Series(utilizations_pct).std() if len(utilizations_pct) > 1 else 0
+            min_utilization = min(utilizations_pct)
+            max_utilization = max(utilizations_pct)
+            range_utilization = max_utilization - min_utilization
+        else:
+            total_assigned = 0
+            avg_load = 0
+            mae = 0
+            avg_utilization = 0
+            std_utilization = 0
+            min_utilization = 0
+            max_utilization = 0
+            range_utilization = 0
+        
+        recent_tasks = len([t for t in tasks if (datetime.now() - datetime.fromisoformat(t['created_at'])).seconds < 60])
+        
+        df_metrics = pd.DataFrame({
+            'Метрика': [
+                'Всего заявок в системе',
+                'Новых заявок за последнюю минуту',
+                'Активных исполнителей',
+                'Обработано заявок',
+                'Справедливость (MAE)',
+                'Средняя нагрузка (заявок/исполнитель)',
+                '---',
+                'СТАТИСТИКА РАСПРЕДЕЛЕНИЯ:',
+                'Средняя утилизация (%)',
+                'Стандартное отклонение (σ, %)',
+                'Минимальная утилизация (%)',
+                'Максимальная утилизация (%)',
+                'Разброс утилизации (%)',
+            ],
+            'Значение': [
+                len(tasks),
+                recent_tasks,
+                len(active_executors),
+                total_assigned,
+                f'{mae:.3f}',
+                f'{avg_load:.1f}',
+                '',
+                '',
+                f'{avg_utilization:.1f}',
+                f'{std_utilization:.2f}',
+                f'{min_utilization:.1f}',
+                f'{max_utilization:.1f}',
+                f'{range_utilization:.1f}',
+            ]
+        })
+        df_metrics.to_excel(writer, sheet_name='Общие метрики', index=False)
+        
+        # === Лист 2: Детали по исполнителям ===
+        if active_executors:
+            exec_data = []
+            for e in active_executors:
+                utilization = e['assigned_today'] / e['daily_limit'] if e['daily_limit'] > 0 else 0
+                deviation = utilization * 100 - avg_utilization
+                exec_data.append({
+                    'ID': e['id'],
+                    'Исполнитель': e['name'],
+                    'Email': e['email'],
+                    'Отдел': e.get('department', 'N/A'),
+                    'Назначено заявок': e['assigned_today'],
+                    'Дневной лимит': e['daily_limit'],
+                    'Утилизация (%)': round(utilization * 100, 1),
+                    'Отклонение от среднего (%)': round(deviation, 1),
+                    'Навыки': ', '.join(e.get('skills', [])),
+                    'Активен': 'Да' if e.get('active', True) else 'Нет'
+                })
+            df_executors = pd.DataFrame(exec_data)
+            df_executors.to_excel(writer, sheet_name='Исполнители', index=False)
+        
+        # === Лист 3: Поступление заявок (последние 5 минут) ===
+        df_tasks_min = _aggregate_per_minute(tasks, 'created_at', window_minutes=5)
+        df_tasks_min.to_excel(writer, sheet_name='Поступление заявок', index=False)
+        
+        # === Лист 4: Назначения (последние 5 минут) ===
+        df_assign_min = _aggregate_per_minute(assignments, 'assigned_at', window_minutes=5)
+        df_assign_min.to_excel(writer, sheet_name='Назначения', index=False)
+        
+        # === Лист 5: Все назначения ===
+        if assignments:
+            assign_data = []
+            for a in assignments:
+                # Найдем исполнителя и заявку
+                executor = next((e for e in executors if e['id'] == a['executor_id']), None)
+                task = next((t for t in tasks if t['id'] == a['task_id']), None)
+                
+                assign_data.append({
+                    'ID назначения': a['id'],
+                    'ID заявки': a['task_id'],
+                    'Категория заявки': task.get('category', 'N/A') if task else 'N/A',
+                    'Приоритет': task.get('priority', 'N/A') if task else 'N/A',
+                    'ID исполнителя': a['executor_id'],
+                    'Имя исполнителя': executor['name'] if executor else 'N/A',
+                    'Отдел': executor.get('department', 'N/A') if executor else 'N/A',
+                    'Дата назначения': a['assigned_at'],
+                    'Оценка (score)': round(a.get('score', 0), 2)
+                })
+            df_assignments = pd.DataFrame(assign_data)
+            df_assignments.to_excel(writer, sheet_name='Все назначения', index=False)
+        
+        # === СОЗДАНИЕ ДИАГРАММ ===
+        workbook = writer.book
+        
+        # === Диаграмма 1: Утилизация исполнителей (на листе "Исполнители") ===
+        if active_executors and 'Исполнители' in workbook.sheetnames:
+            ws_exec = workbook['Исполнители']
+            
+            # Столбчатая диаграмма утилизации
+            chart1 = BarChart()
+            chart1.title = "Утилизация исполнителей (%)"
+            chart1.y_axis.title = "Утилизация (%)"
+            chart1.x_axis.title = "Исполнитель"
+            
+            # Данные из колонки G (Утилизация)
+            data = Reference(ws_exec, min_col=7, min_row=1, max_row=len(active_executors)+1)
+            categories = Reference(ws_exec, min_col=2, min_row=2, max_row=len(active_executors)+1)
+            
+            chart1.add_data(data, titles_from_data=True)
+            chart1.set_categories(categories)
+            chart1.height = 12
+            chart1.width = 20
+            
+            ws_exec.add_chart(chart1, "L2")
+            
+            # Диаграмма 2: Отклонение от среднего
+            chart2 = BarChart()
+            chart2.title = "Отклонение от среднего (%)"
+            chart2.y_axis.title = "Отклонение (%)"
+            chart2.x_axis.title = "Исполнитель"
+            
+            # Данные из колонки H (Отклонение от среднего)
+            data2 = Reference(ws_exec, min_col=8, min_row=1, max_row=len(active_executors)+1)
+            categories2 = Reference(ws_exec, min_col=2, min_row=2, max_row=len(active_executors)+1)
+            
+            chart2.add_data(data2, titles_from_data=True)
+            chart2.set_categories(categories2)
+            chart2.height = 12
+            chart2.width = 20
+            
+            ws_exec.add_chart(chart2, "L22")
+        
+        # === Диаграмма 3: Поступление заявок (линейный график) ===
+        if 'Поступление заявок' in workbook.sheetnames:
+            ws_tasks = workbook['Поступление заявок']
+            
+            chart3 = LineChart()
+            chart3.title = "Поступление заявок (последние 5 минут)"
+            chart3.y_axis.title = "Количество заявок"
+            chart3.x_axis.title = "Время"
+            
+            data3 = Reference(ws_tasks, min_col=2, min_row=1, max_row=ws_tasks.max_row)
+            categories3 = Reference(ws_tasks, min_col=1, min_row=2, max_row=ws_tasks.max_row)
+            
+            chart3.add_data(data3, titles_from_data=True)
+            chart3.set_categories(categories3)
+            chart3.height = 12
+            chart3.width = 20
+            chart3.style = 10
+            
+            ws_tasks.add_chart(chart3, "E2")
+        
+        # === Диаграмма 4: Назначения (линейный график) ===
+        if 'Назначения' in workbook.sheetnames:
+            ws_assign = workbook['Назначения']
+            
+            chart4 = LineChart()
+            chart4.title = "Назначения (последние 5 минут)"
+            chart4.y_axis.title = "Количество назначений"
+            chart4.x_axis.title = "Время"
+            
+            data4 = Reference(ws_assign, min_col=2, min_row=1, max_row=ws_assign.max_row)
+            categories4 = Reference(ws_assign, min_col=1, min_row=2, max_row=ws_assign.max_row)
+            
+            chart4.add_data(data4, titles_from_data=True)
+            chart4.set_categories(categories4)
+            chart4.height = 12
+            chart4.width = 20
+            chart4.style = 12
+            
+            ws_assign.add_chart(chart4, "E2")
+        
+        # === Диаграмма 5: Распределение по отделам (круговая) ===
+        if active_executors and 'Исполнители' in workbook.sheetnames:
+            ws_exec = workbook['Исполнители']
+            
+            # Создаем сводку по отделам
+            departments = {}
+            for e in active_executors:
+                dept = e.get('department', 'N/A')
+                departments[dept] = departments.get(dept, 0) + e['assigned_today']
+            
+            # Добавляем данные для круговой диаграммы справа от таблицы
+            start_row = len(active_executors) + 5
+            ws_exec.cell(start_row, 11, "Отдел")
+            ws_exec.cell(start_row, 12, "Заявок")
+            
+            row = start_row + 1
+            for dept, count in departments.items():
+                ws_exec.cell(row, 11, dept)
+                ws_exec.cell(row, 12, count)
+                row += 1
+            
+            # Создаем круговую диаграмму
+            chart5 = PieChart()
+            chart5.title = "Распределение заявок по отделам"
+            
+            labels = Reference(ws_exec, min_col=11, min_row=start_row+1, max_row=start_row+len(departments))
+            data5 = Reference(ws_exec, min_col=12, min_row=start_row, max_row=start_row+len(departments))
+            
+            chart5.add_data(data5, titles_from_data=True)
+            chart5.set_categories(labels)
+            chart5.height = 12
+            chart5.width = 15
+            
+            # Добавляем подписи данных
+            chart5.dataLabels = DataLabelList()
+            chart5.dataLabels.showPercent = True
+            
+            ws_exec.add_chart(chart5, "L42")
+    
+    output.seek(0)
+    return output.getvalue()
+
 def render_dashboard():
     st.markdown('<h2 class="section-header">⚖️ Распределение заявок</h2>', unsafe_allow_html=True)
+    
+    # Кнопка экспорта в Excel
+    col_export1, col_export2, col_export3 = st.columns([1, 1, 4])
+    with col_export1:
+        if st.button("📥 Экспорт в Excel", use_container_width=True, type="primary"):
+            try:
+                excel_data = export_dashboard_to_excel()
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                filename = f"распределение_заявок_{timestamp}.xlsx"
+                
+                st.download_button(
+                    label="⬇️ Скачать файл",
+                    data=excel_data,
+                    file_name=filename,
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True
+                )
+                st.success(f"✅ Excel файл готов к скачиванию!")
+            except Exception as e:
+                st.error(f"❌ Ошибка при создании Excel: {str(e)}")
+    
+    with col_export2:
+        if st.button("🔄 Обновить данные", use_container_width=True):
+            st.session_state.tasks = load_tasks_from_db()
+            st.session_state.executors = load_executors_from_db()
+            st.session_state.assignments = load_assignments_from_db()
+            st.rerun()
+    
+    st.markdown("---")
 
     # Показываем индикатор нагрузочного тестирования если оно запущено
     test_status_data = get_load_test_status()
@@ -919,7 +1204,7 @@ def render_executors_management():
                         st.success(f"✅ Исполнитель обновлен! Автоматически назначено заявок: {assigned_count}")
                     else:
                         st.success("✅ Исполнитель успешно обновлен!")
-                        st.rerun()
+                    st.rerun()
                 else:
                     st.error("❌ Заполните обязательные поля")
         
@@ -1048,8 +1333,8 @@ def render_executors_management():
                 del params[key]
                 st.session_state.new_executor_params = params
                 st.rerun()
-            else:
-                st.info("📝 Параметры не добавлены. Добавьте первый параметр выше.")
+        else:
+            st.info("📝 Параметры не добавлены. Добавьте первый параметр выше.")
     
     st.markdown("---")
     
@@ -1412,27 +1697,27 @@ def render_load_test():
                 set_load_test_status('stopped')
                 st.warning("Тестирование остановлено")
                 st.rerun()
-        
-        with col2:
+    
+    with col2:
             if st.button("🔄 Обновить", type="secondary"):
                 st.rerun()
     
-    elif test_status == 'completed':
-        elapsed = test_status_data['elapsed']
-        performance = test_status_data['performance']
-        current = test_status_data['current']
-        assigned = test_status_data['assigned']
+            elif test_status == 'completed':
+                elapsed = test_status_data['elapsed']
+                performance = test_status_data['performance']
+                current = test_status_data['current']
+                assigned = test_status_data['assigned']
         
-        st.success(f"""
+            st.success(f"""
         ✅ **Тестирование завершено!**  
         Создано заявок: {current} | Назначено: {assigned}  
         Время выполнения: {elapsed:.2f} сек | Производительность: {performance:.1f} заявок/сек
         """)
         
-        if st.button("🔄 Запустить новое тестирование"):
-            set_load_test_status('idle')
-            st.balloons()
-            st.rerun()
+    if st.button("🔄 Запустить новое тестирование"):
+        set_load_test_status('idle')
+        st.balloons()
+        st.rerun()
     
     elif test_status == 'error':
         error_msg = test_status_data['message']
